@@ -1,0 +1,112 @@
+# Бронирования: модель Booking, DTO для создания и ответа создания.
+# Использует Slot (из slots/models.yaml) и Client (из profile/models.yaml).
+# Содержит все бизнес-правила: лимиты мест, раздельный учёт проката,
+# правило 2 часов для отмены, серверный расчёт price_total.
+
+components:
+  schemas:
+    # ----------------------------------------------------------------
+    # BookingStatus — статус брони
+    # ----------------------------------------------------------------
+    BookingStatus:
+      type: string
+      description: |
+        Статус брони:
+        - active — активная предстоящая бронь
+        - cancelled — ранняя отмена клиентом (≥ 2 ч до начала): место и прокат возвращаются
+        - late_cancel — поздняя отмена клиентом (< 2 ч до начала): место и прокат удерживаются, штраф не взимается (FR-18, LOGIC-004)
+        - studio_cancelled — отмена студией (форс-мажор), с причиной (FR-46)
+      enum: [active, cancelled, late_cancel, studio_cancelled]
+
+    # ----------------------------------------------------------------
+    # Booking — полная модель брони (для getBooking)
+    # ----------------------------------------------------------------
+    Booking:
+      type: object
+      description: |
+        Полная модель брони клиента. Итоговая цена `price_total` считается
+        сервером по формуле:
+          price_total = slot.price × seats_count + slot.rental_price × rental_count
+        Клиент не пересчитывает (LOGIC-003, R-005).
+
+        Для `status = studio_cancelled` обязательно заполняется `cancellation_reason`.
+        Для отменённых броней (cancelled / late_cancel / studio_cancelled)
+        заполняется `cancelled_at`.
+      required:
+        - id
+        - slot
+        - seats_count
+        - rental_count
+        - status
+        - price_total
+        - currency
+        - created_at
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        slot:
+          $ref: '../slots/models.yaml#/components/schemas/Slot'
+        seats_count:
+          type: integer
+          format: int32
+          description: Число мест в брони (1..3). Лимит: min(slot.free_seats, slot.program.capacity_cap, 3).
+          minimum: 1
+          maximum: 3
+          example: 2
+        rental_count:
+          type: integer
+          format: int32
+          description: |
+            Число прокатных наборов (0..seats_count).
+            Лимит: ≤ slot.free_rental_kits. «Свой инвентарь» занимает место,
+            но не прокатный набор (FR-14).
+          minimum: 0
+          maximum: 3
+          example: 1
+        dietary_restrictions:
+          type: string
+          description: Пищевые ограничения (аллергии, диеты). Опционально (FR-50).
+          maxLength: 500
+          example: Без орехов, без лактозы
+        status:
+          $ref: '#/components/schemas/BookingStatus'
+        price_total:
+          type: integer
+          format: int64
+          description: |
+            Итоговая цена брони в минимальных единицах валюты (копейки).
+            Серверное значение (LOGIC-003, R-005):
+            price_total = slot.price × seats_count + slot.rental_price × rental_count.
+          minimum: 0
+          example: 350000
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: RUB
+        created_at:
+          $ref: '../common/models.yaml#/components/schemas/DateTime'
+        cancelled_at:
+          allOf:
+            - $ref: '../common/models.yaml#/components/schemas/DateTime'
+          description: Момент отмены. Заполняется только для отменённых броней (cancelled / late_cancel / studio_cancelled).
+        cancellation_reason:
+          type: string
+          description: |
+            Причина отмены. Заполняется только при status = studio_cancelled
+            (форс-мажор студии). Отображается на SCR-006 и SCR-005 (FR-46).
+          example: Поломка оборудования
+
+    # ----------------------------------------------------------------
+    # BookingSummary — урезанная модель для списка (listBookings)
+    # ----------------------------------------------------------------
+    BookingSummary:
+      type: object
+      description: |
+        Урезанное представление брони для списка (SCR-005). Содержит ключевые
+        поля и вложенный Slot с минимальным набором данных (start_at,
+        program, chef) для карточки брони. Полные детали — через getBooking.
+
+        Клиент сам группирует список на «Предстоящие» и «Историю»
+        по правилам SCR-005:
+        - Предстоящие: status = active И slot.start_at > now
+        - История: всё остальное (start_at ≤ now ИЛИ status
