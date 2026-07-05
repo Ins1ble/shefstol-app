@@ -1,0 +1,117 @@
+# Профиль клиента: модель Client и DTO для обновления профиля и смены телефона.
+# Модель Client используется через $ref из auth (в ответе verify-code) и bookings.
+
+components:
+  schemas:
+    # ----------------------------------------------------------------
+    # Client — профиль клиента
+    # ----------------------------------------------------------------
+    Client:
+      type: object
+      description: |
+        Профиль клиента кулинарной студии «Шеф-стол».
+        Единственная роль в мобильном приложении.
+        При удалении аккаунта (DELETE /profile):
+        - активные брони аннулируются и освобождают места и прокатные наборы в классах;
+        - прошедшие брони анонимизируются (обезличиваются от ПДн), но остаются для статистики студии (FR-48).
+      required:
+        - id
+        - phone
+        - created_at
+        - updated_at
+        - status
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        name:
+          type: string
+          description: |
+            Имя клиента. Может быть пустым/отсутствовать для нового клиента сразу после verify-code
+            (is_new=true) — дозаполняется через PATCH /profile на шаге 3 SCR-001.
+          minLength: 1
+          maxLength: 100
+          example: Анна Петрова
+        phone:
+          $ref: '../common/models.yaml#/components/schemas/Phone'
+        created_at:
+          $ref: '../common/models.yaml#/components/schemas/DateTime'
+        updated_at:
+          $ref: '../common/models.yaml#/components/schemas/DateTime'
+        status:
+          type: string
+          description: |
+            Статус аккаунта.
+            - active — активный аккаунт
+            - deleted — аккаунт удалён, ПДн анонимизированы (FR-48, NFR-11)
+          enum: [active, deleted]
+          example: active
+
+    # ----------------------------------------------------------------
+    # UpdateProfileRequest — обновление имени
+    # ----------------------------------------------------------------
+    UpdateProfileRequest:
+      type: object
+      description: Запрос на обновление профиля (только имя). Смена телефона — отдельный флоу через phone-change.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Новое имя клиента.
+          minLength: 1
+          maxLength: 100
+          example: Анна Петрова
+
+    # ----------------------------------------------------------------
+    # ChangePhoneRequestCodeRequest — запрос OTP для смены телефона
+    # ----------------------------------------------------------------
+    ChangePhoneRequestCodeRequest:
+      type: object
+      description: Запрос OTP-кода для подтверждения смены номера телефона.
+      required:
+        - new_phone
+      properties:
+        new_phone:
+          $ref: '../common/models.yaml#/components/schemas/Phone'
+
+    # ----------------------------------------------------------------
+    # ChangePhoneRequestCodeResponse — ответ на запрос кода смены телефона
+    # ----------------------------------------------------------------
+    ChangePhoneRequestCodeResponse:
+      type: object
+      description: Ответ на запрос OTP-кода для смены телефона.
+      required:
+        - ttl_seconds
+        - resend_after_seconds
+      properties:
+        ttl_seconds:
+          type: integer
+          description: Срок жизни кода в секундах (по умолчанию 300).
+          example: 300
+        resend_after_seconds:
+          type: integer
+          description: Через сколько секунд можно запросить повторную отправку (по умолчанию 60).
+          example: 60
+        code:
+          type: string
+          description: OTP-код для демонстрационной реализации (в production — только через SMS-провайдер).
+          pattern: '^\d{4,6}$'
+          example: '1234'
+
+    # ----------------------------------------------------------------
+    # ChangePhoneConfirmRequest — подтверждение смены телефона
+    # ----------------------------------------------------------------
+    ChangePhoneConfirmRequest:
+      type: object
+      description: Подтверждение смены номера телефона OTP-кодом.
+      required:
+        - new_phone
+        - code
+      properties:
+        new_phone:
+          $ref: '../common/models.yaml#/components/schemas/Phone'
+        code:
+          type: string
+          description: OTP-код из SMS (4–6 цифр).
+          pattern: '^\d{4,6}$'
+          example: '1234'
