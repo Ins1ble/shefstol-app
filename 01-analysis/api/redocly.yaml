@@ -10,8 +10,8 @@ apis:
     root: slots/api.yaml
   bookings@v1:
     root: bookings/api.yaml
-  chefs@v1:
-    root: chefs/api.yaml
+  instructors@v1:
+    root: instructors/api.yaml
 
 rules:
   # Базовые встроенные правила Redocly
