@@ -1,0 +1,261 @@
+# Классы (слоты): модели Slot, SlotSummary, Program, Chef.
+# Slot — полное представление класса (для getSlot).
+# SlotSummary — урезанное представление для списка (listSlots).
+# Program — программа/меню класса (встроена в Slot).
+# Chef — шеф, ведущий класс (упрощённая модель; полная — в chefs/models.yaml).
+
+components:
+  schemas:
+    # ----------------------------------------------------------------
+    # Chef — шеф-повар (упрощённая модель для встраивания в Slot)
+    # ----------------------------------------------------------------
+    Chef:
+      type: object
+      description: Шеф-повар, ведущий класс. Упрощённая модель для встраивания в Slot; полная модель — в chefs/models.yaml.
+      required:
+        - id
+        - name
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        name:
+          type: string
+          description: Имя шефа (без контактов — NFR-11, foundations §8.2).
+          example: Анна Иванова
+
+    # ----------------------------------------------------------------
+    # Program — программа/меню класса
+    # ----------------------------------------------------------------
+    Program:
+      type: object
+      description: |
+        Программа (меню) кулинарного класса. Определяет тематику, уровень
+        сложности и потолок вместимости.
+        - beginner (новичковая): capacity_cap ≤ 8
+        - experienced (опытная): capacity_cap ≤ 12
+      required:
+        - id
+        - name
+        - type
+        - capacity_cap
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        name:
+          type: string
+          description: Название программы (меню).
+          maxLength: 200
+          example: Итальянская паста
+        type:
+          type: string
+          description: Уровень сложности программы.
+          enum: [beginner, experienced]
+          example: beginner
+        description:
+          type: string
+          description: Описание программы (блюда, техники). Опционально.
+          example: Готовим классическую пасту карбонара и тальятелле с ragu.
+        capacity_cap:
+          type: integer
+          format: int32
+          description: |
+            Потолок вместимости программы. Используется в формуле лимита мест:
+            max_seats = min(slot.free_seats, program.capacity_cap, 3).
+          minimum: 1
+          example: 8
+        duration_min:
+          type: integer
+          format: int32
+          description: Длительность класса в минутах. Опционально.
+          minimum: 1
+          example: 180
+        image_url:
+          type: string
+          format: uri
+          description: URL обложки программы (для SCR-003 hero-изображение). Опционально.
+          example: https://cdn.shefstol.example/programs/pasta.jpg
+
+    # ----------------------------------------------------------------
+    # Slot — полное представление класса (для getSlot)
+    # ----------------------------------------------------------------
+    Slot:
+      type: object
+      description: |
+        Полное представление кулинарного класса (слота). Содержит все данные
+        для SCR-003 (карточка класса) и SCR-004 (оформление записи).
+        - free_seats и free_rental_kits — денормализованные счётчики, обновляются
+          атомарно при создании/отмене брони.
+        - price и rental_price — тарифы, используются для расчёта price_total
+          на сервере при createBooking.
+      required:
+        - id
+        - program
+        - chef
+        - start_at
+        - total_seats
+        - free_seats
+        - free_rental_kits
+        - price
+        - rental_price
+        - studio_address
+        - status
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        program:
+          $ref: '#/components/schemas/Program'
+        chef:
+          $ref: '#/components/schemas/Chef'
+        start_at:
+          $ref: '../common/models.yaml#/components/schemas/DateTime'
+        total_seats:
+          type: integer
+          format: int32
+          description: Всего рабочих мест на классе (≤ program.capacity_cap).
+          minimum: 1
+          example: 8
+        free_seats:
+          type: integer
+          format: int32
+          description: Свободно рабочих мест. При 0 — класс заполнен, CTA «Записаться» неактивна.
+          minimum: 0
+          example: 4
+        free_rental_kits:
+          type: integer
+          format: int32
+          description: |
+            Свободно прокатных наборов на этом классе (остаток от общего фонда студии).
+            Раздельный учёт с местами (FR-14): «свой инвентарь» занимает место,
+            но не прокатный набор; «прокатный набор» занимает и место, и набор.
+          minimum: 0
+          example: 5
+        price:
+          type: integer
+          format: int64
+          description: Тариф за одно место в минимальных единицах валюты (копейки).
+          minimum: 0
+          example: 150000
+        rental_price:
+          type: integer
+          format: int64
+          description: Тариф за один прокатный набор в минимальных единицах валюты (копейки).
+          minimum: 0
+          example: 50000
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: ISO 4217 код валюты (применяется к price и rental_price).
+          example: RUB
+        studio_address:
+          type: string
+          description: |
+            Полный почтовый адрес студии. Обязательное поле; основной носитель
+            информации о месте проведения (LOGIC-006).
+          example: Лофт на ул. Заводской, 15
+        studio_lat:
+          type: number
+          format: double
+          description: Широта студии для карты. Опционально.
+          example: 55.7558
+        studio_lng:
+          type: number
+          format: double
+          description: Долгота студии для карты. Опционально.
+          example: 37.6173
+        status:
+          type: string
+          description: |
+            Статус класса.
+            - scheduled — запланирован, доступен для записи (при free_seats > 0)
+            - cancelled — отменён студией (форс-мажор); при попытке createBooking → 410 slot_cancelled
+          enum: [scheduled, cancelled]
+          example: scheduled
+
+    # ----------------------------------------------------------------
+    # SlotSummary — урезанное представление для списка (listSlots)
+    # ----------------------------------------------------------------
+    SlotSummary:
+      type: object
+      description: |
+        Урезанное представление класса для списка (SCR-002). Не содержит
+        описания программы и адреса студии — эти детали загружаются
+        через getSlot при открытии карточки (SCR-003).
+      required:
+        - id
+        - program
+        - chef
+        - start_at
+        - total_seats
+        - free_seats
+        - free_rental_kits
+        - price
+        - rental_price
+        - status
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        program:
+          $ref: '#/components/schemas/Program'
+        chef:
+          $ref: '#/components/schemas/Chef'
+        start_at:
+          $ref: '../common/models.yaml#/components/schemas/DateTime'
+        total_seats:
+          type: integer
+          format: int32
+          minimum: 1
+          example: 8
+        free_seats:
+          type: integer
+          format: int32
+          minimum: 0
+          example: 4
+        free_rental_kits:
+          type: integer
+          format: int32
+          minimum: 0
+          example: 5
+        price:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 150000
+        rental_price:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 50000
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: RUB
+        status:
+          type: string
+          enum: [scheduled, cancelled]
+          example: scheduled
+
+    # ----------------------------------------------------------------
+    # SlotListResponse — ответ listSlots
+    # ----------------------------------------------------------------
+    SlotListResponse:
+      type: object
+      description: Ответ на запрос списка классов. Содержит элементы и метаданные пагинации.
+      required:
+        - items
+        - meta
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SlotSummary'
+          description: Массив классов, отсортированный по start_at по возрастанию (ближайшие первыми).
+        meta:
+          $ref: '../common/models.yaml#/components/schemas/PaginationMeta'
+
+    # ----------------------------------------------------------------
+    # ProgramType — фильтр типов программ
+    # ----------------------------------------------------------------
+    ProgramType:
+      type: string
+      description: Тип программы (для фильтра).
+      enum: [beginner, experienced]
