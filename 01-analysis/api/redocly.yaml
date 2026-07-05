@@ -1,0 +1,41 @@
+# Конфигурация Redocly CLI для валидации и генерации документации OpenAPI
+# Документация: https://redocly.com/docs/cli/
+
+apis:
+  auth@v1:
+    root: auth/api.yaml
+  profile@v1:
+    root: profile/api.yaml
+  slots@v1:
+    root: slots/api.yaml
+  bookings@v1:
+    root: bookings/api.yaml
+  chefs@v1:
+    root: chefs/api.yaml
+
+rules:
+  # Базовые встроенные правила Redocly
+  recommended:
+    # Разрешаем $ref на соседние файлы
+    no-ambiguous-paths: off
+    # Разрешаем примеры без строгой валидации
+    spec-strict: off
+
+  # Кастомные правила под проект «Шеф-стол»
+  operation-operationId: error
+  operation-summary: error
+  no-unused-components: warn
+  tag-description: warn
+  info-contact: off
+  info-license: off
+
+theme:
+  openapi:
+    htmlTemplate: ./docs/template.html
+    theme:
+      colors:
+        primary:
+          main: "#d97706"
+    sortOperationsAlphabetically: true
+    sortTagsAlphabetically: true
+    hideDownloadButton: false
