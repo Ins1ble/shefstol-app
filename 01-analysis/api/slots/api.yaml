@@ -1,0 +1,215 @@
+openapi: 3.0.3
+
+info:
+  title: Шеф-стол API — Slots
+  description: >-
+    Каталог кулинарных классов (слотов): список с фильтрами и пагинацией,
+    детали одного класса. Read-only endpoints — клиент только читает
+    расписание, не изменяет.
+  version: 1.0.0
+
+servers:
+  - url: https://api.shefstol.example/v1
+    description: Production — продакшен-окружение
+  - url: https://staging-api.shefstol.example/v1
+    description: Staging — тестовое окружение
+
+tags:
+  - name: Slots
+    description: Каталог кулинарных классов (read-only)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /slots:
+    get:
+      tags:
+        - Slots
+      summary: Список классов с фильтрами
+      operationId: listSlots
+      description: |
+        Возвращает список кулинарных классов с поддержкой фильтров и пагинации
+        (SCR-002). Классы отсортированы по `start_at` по возрастанию
+        (ближайшие первыми).
+
+        **Фильтры:**
+        - `date_from` / `date_to` — диапазон дат начала класса (ISO 8601, UTC)
+        - `program_type` — типы программ (мультивыбор, OR внутри группы)
+        - `chef_id` — шефы (мультивыбор, OR внутри группы)
+        - `only_available` — только классы со свободными местами (`free_seats > 0`)
+
+        **Фильтры комбинируются по AND между группами:**
+        `(date_from ≤ start_at ≤ date_to) AND (program.type ∈ program_type[]) AND
+        (chef.id ∈ chef_id[]) AND (free_seats > 0 если only_available=true)`.
+
+        **Дефолтное поведение (если фильтры не заданы):**
+        - Без `date_from`/`date_to` → классы на **ближайшие 7 дней** (дефолт API)
+        - Без `program_type` → любой тип
+        - Без `chef_id` → любой шеф
+        - `only_available=false` (default) → показываются все классы, включая
+          заполненные (с пометкой «Мест нет» в UI)
+
+        **Пагинация:** `limit` (1..100, default 20) + `offset` (default 0).
+        В MVP список грузится целиком одной страницей; параметры оставлены
+        как задел на будущее.
+      parameters:
+        - name: date_from
+          in: query
+          description: Начало периода дат начала класса (ISO 8601, UTC). Если не задано — дефолт API «сейчас».
+          required: false
+          schema:
+            type: string
+            format: date-time
+          example: '2026-07-15T00:00:00Z'
+        - name: date_to
+          in: query
+          description: Конец периода дат начала класса (ISO 8601, UTC). Если не задано — дефолт API «date_from + 7 дней».
+          required: false
+          schema:
+            type: string
+            format: date-time
+          example: '2026-07-22T23:59:59Z'
+        - name: program_type
+          in: query
+          description: Типы программ (мультивыбор). OR внутри группы, AND с другими фильтрами.
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: 'models.yaml#/components/schemas/ProgramType'
+          style: form
+          explode: true
+          example: [beginner]
+        - name: chef_id
+          in: query
+          description: Идентификаторы шефов (мультивыбор). OR внутри группы, AND с другими фильтрами.
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '../common/models.yaml#/components/schemas/UUID'
+          style: form
+          explode: true
+        - name: only_available
+          in: query
+          description: |
+            Показывать только классы со свободными местами (`free_seats > 0`).
+            По умолчанию `false` — показываются все классы, включая заполненные.
+          required: false
+          schema:
+            type: boolean
+            default: false
+          example: false
+        - name: limit
+          in: query
+          description: Размер страницы (1..100).
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 20
+        - name: offset
+          in: query
+          description: Смещение страницы (≥ 0).
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: Список классов (может быть пустым — тогда в UI empty-state)
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/SlotListResponse'
+              examples:
+                with_items:
+                  summary: Есть классы
+                  value:
+                    items:
+                      - id: 550e8400-e29b-41d4-a716-446655440000
+                        program:
+                          id: 660e8400-e29b-41d4-a716-446655440001
+                          name: Итальянская паста
+                          type: beginner
+                          capacity_cap: 8
+                          duration_min: 180
+                        chef:
+                          id: 770e8400-e29b-41d4-a716-446655440002
+                          name: Анна Иванова
+                        start_at: '2026-07-15T10:00:00Z'
+                        total_seats: 8
+                        free_seats: 4
+                        free_rental_kits: 5
+                        price: 150000
+                        rental_price: 50000
+                        currency: RUB
+                        status: scheduled
+                    meta:
+                      limit: 20
+                      offset: 0
+                      total: 1
+                empty:
+                  summary: Нет классов по фильтрам (empty-state на UI)
+                  value:
+                    items: []
+                    meta:
+                      limit: 20
+                      offset: 0
+                      total: 0
+        "400":
+          $ref: '../common/models.yaml#/components/responses/BadRequest'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+  /slots/{slotId}:
+    get:
+      tags:
+        - Slots
+      summary: Детали класса
+      operationId: getSlot
+      description: |
+        Возвращает полное представление класса (SCR-003 — карточка класса).
+        Используется для отображения всех параметров перед записью: программа,
+        шеф, адрес студии, доступность мест и проката, тарифы.
+
+        Класс может быть:
+        - `scheduled` + `free_seats > 0` → доступен для записи
+        - `scheduled` + `free_seats = 0` → заполнен, CTA «Записаться» неактивна
+        - `cancelled` → класс отменён студией, CTA скрыта
+
+        При попытке создать бронь на `cancelled` класс → 410 slot_cancelled.
+      parameters:
+        - name: slotId
+          in: path
+          description: Идентификатор класса
+          required: true
+          schema:
+            $ref: '../common/models.yaml#/components/schemas/UUID'
+      responses:
+        "200":
+          description: Полное представление класса
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/Slot'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        "404":
+          $ref: '../common/models.yaml#/components/responses/NotFound'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../common/models.yaml#/components/securitySchemes/bearerAuth'
