@@ -136,4 +136,172 @@ paths:
       summary: Список своих броней
       operationId: listBookings
       description: |
-        Возвращ
+        Возвращает список броней текущего авторизованного клиента (SCR-005).
+        Сервер идентифицирует клиента по bearer-токену и возвращает только
+        его данные (NFR-12).
+
+        **Фильтрация по статусу НЕ производится:** сервер возвращает все
+        брони клиента (активные, отменённые, поздние, отменённые студией).
+        Клиент сам группирует на «Предстоящие» и «Историю» по правилам SCR-005:
+        - Предстоящие: `status = active` И `slot.start_at > now`
+        - История: всё остальное
+
+        **Сортировка:** по `slot.start_at` по убыванию (свежие вверху) —
+        удобно для вкладки «История»; клиент пересортировывает «Предстоящие»
+        по возрастанию локально.
+
+        **Пагинация:** `limit` (1..100, default 20) + `offset` (default 0).
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Список броней (может быть пустым — empty-state в UI)
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/BookingListResponse'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+  /bookings/{bookingId}:
+    get:
+      tags:
+        - Bookings
+      summary: Детали брони
+      operationId: getBooking
+      description: |
+        Возвращает полное представление брони (SCR-006). Клиент может
+        получить только свою бронь (NFR-12); попытка доступа к чужой
+        → 403 forbidden.
+
+        Используется для отображения всех деталей и как основа для отмены
+        через cancelBooking.
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            $ref: '../common/models.yaml#/components/schemas/UUID'
+      responses:
+        "200":
+          description: Полное представление брони
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/Booking'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        "403":
+          $ref: '../common/models.yaml#/components/responses/Forbidden'
+        "404":
+          $ref: '../common/models.yaml#/components/responses/NotFound'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+  /bookings/{bookingId}/cancel:
+    post:
+      tags:
+        - Bookings
+      summary: Отменить бронь
+      operationId: cancelBooking
+      description: |
+        Отменяет бронь (SCR-006 → BS-003). Работает только для броней со
+        `status = active`. Отмена — только целиком (все места сразу).
+
+        **Правило 2 часов (LOGIC-004, FR-17, FR-18):**
+        Сервер определяет тип отмены по `slot.start_at − now`:
+        - **`≥ 2 часа` до начала → status = `cancelled` (ранняя отмена):**
+          места и прокатные наборы возвращаются в слот, счётчики
+          `slot.free_seats` и `slot.free_rental_kits` увеличиваются.
+        - **`< 2 часа` до начала → status = `late_cancel` (поздняя отмена):**
+          места и прокатные наборы НЕ возвращаются (удерживаются),
+          но денежный штраф не взимается.
+        - **Граница ровно 2 часа трактуется как ранняя отмена** (≥ 2 ч).
+
+        **Защитные проверки:**
+        - `booking.status = active` (иначе 409 already_cancelled)
+        - `slot.start_at > now` (иначе 422 slot_started — класс уже начался)
+        - Клиент — владелец брони (иначе 403 forbidden)
+
+        **Возвращает:** обновлённый Booking с новым `status` и заполненным
+        `cancelled_at`.
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema:
+            $ref: '../common/models.yaml#/components/schemas/UUID'
+      responses:
+        "200":
+          description: |
+            Бронь успешно отменена. Статус — cancelled (ранняя) или
+            late_cancel (поздняя). Оба случая — УСПЕХ, не ошибка.
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/Booking'
+              examples:
+                early_cancel:
+                  summary: Ранняя отмена (≥ 2 ч)
+                  value:
+                    id: 550e8400-e29b-41d4-a716-446655440000
+                    seats_count: 2
+                    rental_count: 1
+                    status: cancelled
+                    price_total: 350000
+                    currency: RUB
+                    created_at: '2026-07-01T18:20:00Z'
+                    cancelled_at: '2026-07-10T10:00:00Z'
+                late_cancel:
+                  summary: Поздняя отмена (< 2 ч, без штрафа)
+                  value:
+                    id: 550e8400-e29b-41d4-a716-446655440000
+                    seats_count: 2
+                    rental_count: 1
+                    status: late_cancel
+                    price_total: 350000
+                    currency: RUB
+                    created_at: '2026-07-01T18:20:00Z'
+                    cancelled_at: '2026-07-15T09:30:00Z'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        "403":
+          $ref: '../common/models.yaml#/components/responses/Forbidden'
+        "404":
+          $ref: '../common/models.yaml#/components/responses/NotFound'
+        "409":
+          description: Бронь уже отменена ранее (повторная отмена невозможна — терминальный статус).
+          content:
+            application/json:
+              schema:
+                $ref: '../common/models.yaml#/components/schemas/Error'
+              example:
+                code: already_cancelled
+                message: Запись уже отменена.
+        "422":
+          $ref: '../common/models.yaml#/components/responses/Unprocessable'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../common/models.yaml#/components/securitySchemes/bearerAuth'
