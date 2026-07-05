@@ -1,0 +1,183 @@
+# Аутентификация: схема безопасности и DTO потока OTP (вход, регистрация, push-токены).
+# Модель Client импортируется из ../profile/models.yaml (в ответе verify-code).
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'JWT access-токен, выдаётся после POST /auth/verify-code и обновляется через POST /auth/refresh. Передаётся в заголовке Authorization: Bearer <access_token>.'
+
+  schemas:
+    # ----------------------------------------------------------------
+    # RequestCodeRequest — запрос OTP-кода
+    # ----------------------------------------------------------------
+    RequestCodeRequest:
+      type: object
+      description: Запрос на отправку OTP-кода на номер телефона (шаг 1 SCR-001).
+      required:
+        - phone
+      properties:
+        phone:
+          $ref: '../common/models.yaml#/components/schemas/Phone'
+
+    # ----------------------------------------------------------------
+    # RequestCodeResponse — ответ на запрос OTP-кода
+    # ----------------------------------------------------------------
+    RequestCodeResponse:
+      type: object
+      description: |
+        Ответ на запрос OTP-кода.
+        В демонстрационной backend-реализации code возвращается в ответе
+        вместо отправки через SMS-провайдера. В production код должен
+        отправляться через провайдера и не возвращаться клиенту.
+      required:
+        - ttl_seconds
+        - resend_after_seconds
+      properties:
+        ttl_seconds:
+          type: integer
+          description: Срок жизни кода в секундах (по умолчанию 300 = 5 минут). По истечении код недействителен (verify-code вернёт invalid_code).
+          example: 300
+        resend_after_seconds:
+          type: integer
+          description: Через сколько секунд можно запросить повторную отправку (по умолчанию 60). Более ранний повтор → 429.
+          example: 60
+        code:
+          type: string
+          description: OTP-код для демонстрационной реализации без SMS-провайдера. В production не возвращается клиенту.
+          pattern: '^\d{4,6}$'
+          example: '123456'
+
+    # ----------------------------------------------------------------
+    # VerifyCodeRequest — подтверждение кода
+    # ----------------------------------------------------------------
+    VerifyCodeRequest:
+      type: object
+      description: >-
+        Подтверждение OTP-кода и вход/регистрация (шаг 2 SCR-001).
+        Только phone и code: на этом шаге ещё не известно, новый клиент
+        или существующий, поэтому имя здесь не передаётся — для нового
+        клиента оно дозаполняется отдельным шагом (PATCH /profile, шаг 3 SCR-001).
+      required:
+        - phone
+        - code
+      properties:
+        phone:
+          $ref: '../common/models.yaml#/components/schemas/Phone'
+        code:
+          type: string
+          description: OTP-код из SMS (4–6 цифр).
+          pattern: '^\d{4,6}$'
+          example: '1234'
+
+    # ----------------------------------------------------------------
+    # VerifyCodeResponse — ответ на подтверждение кода
+    # ----------------------------------------------------------------
+    VerifyCodeResponse:
+      type: object
+      description: >-
+        Ответ на подтверждение кода — пара токенов сессии и данные клиента.
+        Для нового клиента (is_new=true) поле client.name пустое/отсутствует:
+        имя дозаполняется через PATCH /profile (шаг 3 SCR-001).
+        Существующий клиент возвращается с заполненным именем.
+      required:
+        - tokens
+        - client
+        - is_new
+      properties:
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+        client:
+          $ref: '../profile/models.yaml#/components/schemas/Client'
+        is_new:
+          type: boolean
+          description: true, если клиент только что зарегистрирован (имя ещё не задано, требуется шаг 3 SCR-001).
+          example: false
+
+    # ----------------------------------------------------------------
+    # TokenPair — пара JWT-токенов (access + refresh)
+    # ----------------------------------------------------------------
+    TokenPair:
+      type: object
+      description: >-
+        Пара JWT-токенов сессии. access_token передаётся в Authorization
+        для защищённых запросов; refresh_token используется только на
+        /auth/refresh для получения новой пары (ротация).
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: JWT access-токен. Короткоживущий, передаётся в заголовке Authorization.
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Refresh-токен для обновления сессии через POST /auth/refresh. Долгоживущий, хранится только на клиенте в защищённом хранилище.
+          example: rt_8f3a9b2c1d4e5f6a7b8c9d0e1f2a3b4c
+        token_type:
+          type: string
+          enum: [Bearer]
+          example: Bearer
+        expires_in:
+          type: integer
+          format: int32
+          description: Срок жизни access-токена в секундах.
+          example: 900
+
+    # ----------------------------------------------------------------
+    # RefreshTokenRequest — обновление токенов
+    # ----------------------------------------------------------------
+    RefreshTokenRequest:
+      type: object
+      description: Запрос на обновление сессии по refresh-токену (ротация).
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: Действительный refresh-токен, ранее выданный verify-code или refresh.
+
+    # ----------------------------------------------------------------
+    # PushTokenRequest — регистрация push-токена
+    # ----------------------------------------------------------------
+    PushTokenRequest:
+      type: object
+      description: Регистрация push-токена устройства для напоминаний о предстоящих классах (FR-33, LOGIC-007).
+      required:
+        - token
+        - platform
+      properties:
+        token:
+          type: string
+          description: Токен push-уведомлений, выданный платформой (APNs/FCM).
+          example: apns_token_xxxxxxxx...
+        platform:
+          type: string
+          description: Платформа устройства.
+          enum: [ios, android]
+          example: ios
+
+    # ----------------------------------------------------------------
+    # PushTokenDeleteRequest — удаление push-токена
+    # ----------------------------------------------------------------
+    PushTokenDeleteRequest:
+      type: object
+      description: >-
+        Снятие регистрации push-токена устройства. Токен передаётся в теле,
+        а не в URL, чтобы не записывать сырое значение токена в логи/историю URL.
+      required:
+        - token
+        - platform
+      properties:
+        token:
+          type: string
+          description: Токен push-уведомлений, выданный платформой (APNs/FCM).
+        platform:
+          type: string
+          enum: [ios, android]
+          example: ios
