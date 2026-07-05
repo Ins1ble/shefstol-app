@@ -1,0 +1,119 @@
+openapi: 3.0.3
+
+info:
+  title: Шеф-стол API — Instructors
+  description: >-
+    Справочник инструкторов (шеф-поваров) кулинарной студии. Read-only endpoint
+    для отображения списка шефов в фильтрах классов (BS-001, SCR-002).
+    Контакты шефов не возвращаются (NFR-11).
+  version: 1.0.0
+
+servers:
+  - url: https://api.shefstol.example/v1
+    description: Production — продакшен-окружение
+  - url: https://staging-api.shefstol.example/v1
+    description: Staging — тестовое окружение
+
+tags:
+  - name: Instructors
+    description: Справочник шеф-поваров (read-only)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /instructors:
+    get:
+      tags:
+        - Instructors
+      summary: Список инструкторов (шефов)
+      operationId: listInstructors
+      description: |
+        Возвращает справочник шеф-поваров студии. Используется для заполнения
+        чипов фильтра «Шеф» на BS-001.
+
+        **Фильтр `only_active`:**
+        - `true` (default) — возвращает только активных шефов (ведущих классы)
+        - `false` — все шефы (включая тех, кто временно не ведёт классы)
+
+        **Сортировка:** по `name` по алфавиту (А–Я).
+
+        **Пагинация:** `limit` (1..100, default 20) + `offset` (default 0).
+        Справочник шефов обычно небольшой (≤ 20 человек), поэтому в MVP
+        грузится целиком одной страницей.
+
+        **Приватность (NFR-11):**
+        В ответе возвращается только `id` и `name`. Контакты шефов (телефон,
+        email) не включаются в клиентский API (foundations §8.2).
+
+        **Неблокирующая загрузка (BS-001):**
+        Если запрос падает (5xx/сеть), BS-001 показывает inline-ошибку
+        «Не удалось загрузить список шефов» с кнопкой «Обновить»; остальные
+        группы фильтров остаются доступны.
+      parameters:
+        - name: only_active
+          in: query
+          description: |
+            Фильтр по активности. По умолчанию true — только шефы,
+            которые ведут классы в расписании.
+          required: false
+          schema:
+            type: boolean
+            default: true
+          example: true
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Справочник инструкторов (может быть пустым — тогда группа «Шеф» скрывается в BS-001)
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/InstructorListResponse'
+              examples:
+                with_items:
+                  summary: Есть инструкторы
+                  value:
+                    items:
+                      - id: 770e8400-e29b-41d4-a716-446655440002
+                        name: Анна Иванова
+                      - id: 880e8400-e29b-41d4-a716-446655440003
+                        name: Игорь Петров
+                      - id: 990e8400-e29b-41d4-a716-446655440004
+                        name: Мария Сидорова
+                    meta:
+                      limit: 20
+                      offset: 0
+                      total: 3
+                empty:
+                  summary: Справочник пуст
+                  value:
+                    items: []
+                    meta:
+                      limit: 20
+                      offset: 0
+                      total: 0
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../common/models.yaml#/components/securitySchemes/bearerAuth'
