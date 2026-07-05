@@ -1,0 +1,192 @@
+openapi: 3.0.3
+
+info:
+  title: Шеф-стол API — Profile
+  description: >-
+    Управление профилем клиента кулинарной студии: просмотр и редактирование имени,
+    смена номера телефона (с подтверждением через OTP), удаление аккаунта с
+    анонимизацией ПДн и аннулированием активных броней (FR-47, FR-48, NFR-11).
+  version: 1.0.0
+
+servers:
+  - url: https://api.shefstol.example/v1
+    description: Production — продакшен-окружение
+  - url: https://staging-api.shefstol.example/v1
+    description: Staging — тестовое окружение
+
+tags:
+  - name: Profile
+    description: Профиль клиента (имя, телефон, удаление аккаунта)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /profile:
+    get:
+      tags:
+        - Profile
+      summary: Получить профиль текущего клиента
+      operationId: getProfile
+      description: >-
+        Возвращает профиль текущего авторизованного клиента (идентификация по
+        bearer-токену). Клиент видит только свои данные (NFR-12).
+      responses:
+        "200":
+          description: Профиль клиента
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/Client'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+    patch:
+      tags:
+        - Profile
+      summary: Обновить имя клиента
+      operationId: updateProfile
+      description: >-
+        Обновляет имя текущего клиента (SCR-007, инлайн-правка поля «Имя»).
+        Смена телефона — отдельный флоу через /profile/phone-change/code
+        и /profile/phone-change/confirm.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/UpdateProfileRequest'
+      responses:
+        "200":
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/Client'
+        "400":
+          $ref: '../common/models.yaml#/components/responses/BadRequest'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+    delete:
+      tags:
+        - Profile
+      summary: Удалить аккаунт
+      operationId: deleteAccount
+      description: >-
+        Удаляет аккаунт текущего клиента с последствиями (FR-48, NFR-11):
+        - активные брони аннулируются и освобождают места и прокатные наборы
+          в соответствующих классах;
+        - прошедшие брони анонимизируются (имя и телефон обезличиваются),
+          но остаются в данных студии для статистики;
+        - refresh-токен инвалидируется, access-токен становится недействительным
+          по истечении срока;
+        - номер телефона освобождается для повторной регистрации.
+        Требует явного подтверждения в UI (мини-шторка SCR-007).
+      responses:
+        "204":
+          description: Аккаунт удалён, сессия завершена
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+  /profile/phone-change/code:
+    post:
+      tags:
+        - Profile
+      summary: Запросить код для смены телефона
+      operationId: requestPhoneChangeCode
+      description: >-
+        Отправляет OTP-код на новый номер телефона для подтверждения смены
+        (шаг 1 инлайн-правки телефона в SCR-007). Текущий номер клиента не
+        меняется до успешного confirm.
+
+
+        Правила:
+
+        - Новый номер принимается в формате E.164.
+
+        - Если номер уже занят другим клиентом → 409 phone_already_used.
+
+        - TTL кода — ttl_seconds (по умолчанию 300 с); после истечения код
+          недействителен (confirm вернёт invalid_code).
+
+        - Повторная отправка — не раньше resend_after_seconds (по умолчанию 60 с).
+
+        - Лимит запросов на номер/устройство → 429 при превышении.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ChangePhoneRequestCodeRequest'
+      responses:
+        "200":
+          description: Код отправлен на новый номер
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/ChangePhoneRequestCodeResponse'
+        "400":
+          $ref: '../common/models.yaml#/components/responses/BadRequest'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        "409":
+          $ref: '../common/models.yaml#/components/responses/Conflict'
+        "429":
+          $ref: '../common/models.yaml#/components/responses/TooManyRequests'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+  /profile/phone-change/confirm:
+    post:
+      tags:
+        - Profile
+      summary: Подтвердить смену телефона
+      operationId: confirmPhoneChange
+      description: >-
+        Подтверждает смену номера телефона OTP-кодом (шаг 2 инлайн-правки
+        телефона в SCR-007). При успехе — phone клиента обновляется,
+        возвращается обновлённый профиль.
+
+
+        Ограничения:
+
+        - Лимит попыток ввода кода: при превышении код инвалидируется.
+
+        - Неверный или истёкший код → 400 invalid_code.
+
+        - Если номер занят к моменту подтверждения → 409 phone_already_used.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/ChangePhoneConfirmRequest'
+      responses:
+        "200":
+          description: Номер успешно изменён, обновлённый профиль
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/Client'
+        "400":
+          $ref: '../common/models.yaml#/components/responses/BadRequest'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        "409":
+          $ref: '../common/models.yaml#/components/responses/Conflict'
+        "429":
+          $ref: '../common/models.yaml#/components/responses/TooManyRequests'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      $ref: '../common/models.yaml#/components/securitySchemes/bearerAuth'
