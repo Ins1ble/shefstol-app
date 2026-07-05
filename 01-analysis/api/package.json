@@ -1,0 +1,16 @@
+{
+  "name": "shefstol-api-spec",
+  "version": "1.0.0",
+  "description": "OpenAPI-спецификации REST API мобильного приложения «Шеф-стол»",
+  "scripts": {
+    "lint": "redocly lint common/models.yaml auth/api.yaml profile/api.yaml slots/api.yaml bookings/api.yaml chefs/api.yaml",
+    "build-docs": "redocly build-docs auth/api.yaml --output dist/auth.html && redocly build-docs profile/api.yaml --output dist/profile.html && redocly build-docs slots/api.yaml --output dist/slots.html && redocly build-docs bookings/api.yaml --output dist/bookings.html && redocly build-docs chefs/api.yaml --output dist/chefs.html",
+    "preview": "redocly preview-docs auth/api.yaml"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.25.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
