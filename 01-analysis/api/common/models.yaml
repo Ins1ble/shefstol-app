@@ -1,0 +1,273 @@
+# Общие модели и responses для всех доменов API приложения «Шеф-стол».
+# Импортируются через $ref: '../common/models.yaml#/...' из auth, profile, slots, bookings, chefs.
+
+components:
+  # ==================================================================
+  # Схемы (модели данных)
+  # ==================================================================
+  schemas:
+    # ----------------------------------------------------------------
+    # Error — универсальный формат ошибок (domain code + message + details)
+    # ----------------------------------------------------------------
+    Error:
+      type: object
+      description: Универсальный формат ошибок API. Поле `code` — машинный код для обработки на клиенте, `message` — человекочитаемый текст для UI.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Машинный код ошибки (snake_case). Полный каталог — в README.
+          example: slot_full
+        message:
+          type: string
+          description: Человекочитаемый текст для UI (снек / inline-ошибкака).
+          example: Недостаточно мест. Свободно: 2.
+        details:
+          type: object
+          description: Дополнительные данные для коррекции формы на клиенте.
+          additionalProperties: true
+          example:
+            available_seats: 2
+            available_rental_kits: 0
+
+    # ----------------------------------------------------------------
+    # TokenPair — пара JWT-токенов (access + refresh)
+    # ----------------------------------------------------------------
+    TokenPair:
+      type: object
+      description: Пара JWT-токенов сессии. access_token передаётся в Authorization, refresh_token — только для POST /auth/refresh (ротация).
+      required:
+        - access_token
+        - refresh_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: Короткоживущий JWT (≈15 мин).
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Долгоживущий токен обновления (≈30 дней). Хранится только на клиенте.
+          example: rt_8f3a9b2c1d4e5f6a7b8c9d0e1f2a3b4c
+        token_type:
+          type: string
+          enum: [Bearer]
+          example: Bearer
+        expires_in:
+          type: integer
+          format: int32
+          description: Срок жизни access_token в секундах.
+          example: 900
+
+    # ----------------------------------------------------------------
+    # PaginationMeta — метаданные пагинации (limit/offset)
+    # ----------------------------------------------------------------
+    PaginationMeta:
+      type: object
+      description: Метаданные постраничной выдачи.
+      required:
+        - limit
+        - offset
+        - total
+      properties:
+        limit:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          example: 20
+        offset:
+          type: integer
+          format: int32
+          minimum: 0
+          example: 0
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Общее число записей, удовлетворяющих фильтру (без учёта limit/offset).
+          example: 47
+
+    # ----------------------------------------------------------------
+    # Money — денежная сумма (amount + currency ISO 4217)
+    # ----------------------------------------------------------------
+    Money:
+      type: object
+      description: Денежная сумма. amount — в минимальных единицах валюты (копейки).
+      required:
+        - amount
+        - currency
+      properties:
+        amount:
+          type: integer
+          format: int64
+          description: Сумма в минимальных единицах валюты (копейки для RUB).
+          example: 150000
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: ISO 4217 код валюты.
+          example: RUB
+
+    # ----------------------------------------------------------------
+    # UUID — общий тип идентификатора (переиспользуется через $ref)
+    # ----------------------------------------------------------------
+    UUID:
+      type: string
+      format: uuid
+      description: UUID v4.
+      example: 550e8400-e29b-41d4-a716-446655440000
+
+    # ----------------------------------------------------------------
+    # DateTime — ISO 8601 дата-время (всегда в UTC)
+    # ----------------------------------------------------------------
+    DateTime:
+      type: string
+      format: date-time
+      description: ISO 8601, всегда в UTC.
+      example: '2026-07-15T10:00:00Z'
+
+    # ----------------------------------------------------------------
+    # Phone — номер телефона в формате E.164
+    # ----------------------------------------------------------------
+    Phone:
+      type: string
+      pattern: '^\+[1-9]\d{1,14}$'
+      description: Номер телефона в формате E.164.
+      example: '+79991234567'
+
+  # ==================================================================
+  # Схемы безопасности
+  # ==================================================================
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access-токен в заголовке `Authorization: Bearer <token>`.
+        При 401 клиент один раз пробует refresh через POST /auth/refresh;
+        при неудаче — редирект на SCR-001 (вход по OTP).
+
+  # ==================================================================
+  # Общие responses (используются через $ref во всех доменах)
+  # ==================================================================
+  responses:
+    BadRequest:
+      description: Невалидные параметры запроса (400).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalid_phone:
+              summary: Невалидный номер телефона
+              value:
+                code: invalid_phone
+                message: Номер телефона имеет неверный формат
+            invalid_name:
+              summary: Невалидное имя
+              value:
+                code: invalid_name
+                message: Проверьте имя — кажется, тут лишние символы
+    Unauthorized:
+      description: Токен невалиден или истёк (401).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: unauthorized
+            message: Сессия истекла, войдите снова
+    Forbidden:
+      description: Нет прав на ресурс (403).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: forbidden
+            message: Бронь недоступна
+    NotFound:
+      description: Ресурс не найден (404).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: not_found
+            message: Ресурс не найден
+    Conflict:
+      description: Конфликт бизнес-логики (409). Код ошибки в поле `code`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            slot_full:
+              summary: Нет свободных мест
+              value:
+                code: slot_full
+                message: Недостаточно мест. Свободно: 2.
+                details:
+                  available_seats: 2
+                  available_rental_kits: 0
+            double_booking:
+              summary: Уже есть активная бронь на этот слот
+              value:
+                code: double_booking
+                message: У вас уже есть активная запись на этот класс
+            already_cancelled:
+              summary: Бронь уже отменена
+              value:
+                code: already_cancelled
+                message: Запись уже отменена
+            idempotency_key_conflict:
+              summary: Тот же Idempotency-Key, другое тело
+              value:
+                code: idempotency_key_conflict
+                message: Не удалось оформить запись. Попробуйте ещё раз.
+            phone_already_used:
+              summary: Номер уже занят другим клиентом
+              value:
+                code: phone_already_used
+                message: Этот номер уже используется. Укажите другой.
+    Gone:
+      description: Ресурс больше недоступен (410) — например, класс отменён студией.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: slot_cancelled
+            message: Класс отменён и больше недоступен.
+    Unprocessable:
+      description: Бизнес-ограничение (422) — например, класс уже начался.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: slot_started
+            message: Класс уже начался — отмена недоступна.
+    TooManyRequests:
+      description: Превышен лимит запросов (429) — защита от перебора OTP.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: too_many_requests
+            message: Слишком много попыток. Подождите немного.
+    InternalError:
+      description: Внутренняя ошибка сервера (5xx).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: internal_error
+            message: Что-то пошло не так. Попробуйте ещё раз позже.
