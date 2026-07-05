@@ -1,0 +1,139 @@
+openapi: 3.0.3
+
+info:
+  title: Шеф-стол API — Bookings
+  description: >-
+    Бронирования кулинарных классов: создание (с идемпотентностью), список
+    своих броней, детали одной брони, отмена с правилом 2 часов.
+    Все операции — только для текущего авторизованного клиента (NFR-12).
+  version: 1.0.0
+
+servers:
+  - url: https://api.shefstol.example/v1
+    description: Production — продакшен-окружение
+  - url: https://staging-api.shefstol.example/v1
+    description: Staging — тестовое окружение
+
+tags:
+  - name: Bookings
+    description: Бронирования (создание, список, детали, отмена)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /bookings:
+    post:
+      tags:
+        - Bookings
+      summary: Создать бронь
+      operationId: createBooking
+      description: |
+        Создаёт новую бронь на кулинарный класс (SCR-004). Атомарно проверяет
+        лимиты и резервирует места и прокатные наборы.
+
+        **Идемпотентность (NFR-9, R-022):**
+        Обязательный заголовок `Idempotency-Key` (UUID v4).
+        - Повтор запроса с тем же ключом и тем же телом → возвращает уже
+          созданную бронь (201) без создания дубля.
+        - Тот же ключ с другим телом → 409 idempotency_key_conflict.
+        - Ключ хранится на сервере ≥ 24 часа.
+
+        **Серверные проверки:**
+        - `slot.status = scheduled` (иначе 410 slot_cancelled)
+        - `slot.start_at > now` (иначе 422 slot_started)
+        - `seats_count ≤ slot.free_seats` (иначе 409 slot_full)
+        - `seats_count ≤ slot.program.capacity_cap` (иначе 409 slot_full)
+        - `seats_count ≤ 3` (групповой лимит, иначе 409 slot_full)
+        - `rental_count ≤ slot.free_rental_kits` (иначе 409 rental_unavailable)
+        - `rental_count ≤ seats_count` (иначе 400 bad_request)
+        - У клиента нет активной брони на этот слот (иначе 409 double_booking)
+
+        **Расчёт цены (LOGIC-003, R-005):**
+        Сервер считает `price_total = slot.price × seats_count +
+        slot.rental_price × rental_count`. Клиент не пересчитывает.
+
+        **Успешный ответ:**
+        - 201 с телом `CreateBookingResponse` (бронь + is_first_booking + reminder_hours)
+        - Бронь получает статус `active`
+        - Счётчики `slot.free_seats` и `slot.free_rental_kits` уменьшаются
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: |
+            UUID v4 ключ идемпотентности. Обязателен. Гарантирует отсутствие
+            дублей при сетевых сбоях (NFR-9, R-022).
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: 'models.yaml#/components/schemas/CreateBookingRequest'
+      responses:
+        "201":
+          description: Бронь создана
+          content:
+            application/json:
+              schema:
+                $ref: 'models.yaml#/components/schemas/CreateBookingResponse'
+        "400":
+          $ref: '../common/models.yaml#/components/responses/BadRequest'
+        "401":
+          $ref: '../common/models.yaml#/components/responses/Unauthorized'
+        "409":
+          description: |
+            Конфликт бизнес-логики. Код ошибки в поле `code`:
+            - slot_full — нет свободных мест (или превышен потолок программы / групповой лимит 3)
+            - rental_unavailable — нет свободных прокатных наборов
+            - double_booking — у клиента уже есть активная бронь на этот слот
+            - idempotency_key_conflict — тот же Idempotency-Key, другое тело
+          content:
+            application/json:
+              schema:
+                $ref: '../common/models.yaml#/components/schemas/Error'
+              examples:
+                slot_full:
+                  summary: Нет свободных мест
+                  value:
+                    code: slot_full
+                    message: Недостаточно мест. Свободно: 2.
+                    details:
+                      available_seats: 2
+                      available_rental_kits: 3
+                rental_unavailable:
+                  summary: Нет свободных прокатных наборов
+                  value:
+                    code: rental_unavailable
+                    message: Недостаточно прокатных наборов. Свободно: 1.
+                    details:
+                      available_seats: 4
+                      available_rental_kits: 1
+                double_booking:
+                  summary: Уже есть активная бронь на этот слот
+                  value:
+                    code: double_booking
+                    message: У вас уже есть активная запись на этот класс.
+                idempotency_key_conflict:
+                  summary: Тот же Idempotency-Key, другое тело
+                  value:
+                    code: idempotency_key_conflict
+                    message: Не удалось оформить запись. Попробуйте ещё раз.
+        "410":
+          $ref: '../common/models.yaml#/components/responses/Gone'
+        "422":
+          $ref: '../common/models.yaml#/components/responses/Unprocessable'
+        default:
+          $ref: '../common/models.yaml#/components/responses/InternalError'
+
+    get:
+      tags:
+        - Bookings
+      summary: Список своих броней
+      operationId: listBookings
+      description: |
+        Возвращ
