@@ -1,0 +1,83 @@
+# Справочник инструкторов (шеф-поваров): модель Instructor и ответ listInstructors.
+# Используется для фильтрации классов по шефу (BS-001, SCR-002).
+# В контексте «Шеф-стол» Instructor = шеф-повар, ведущий кулинарный класс.
+# Контакты шефов (телефон, email) НЕ возвращаются — NFR-11, foundations §8.2.
+
+components:
+  schemas:
+    # ----------------------------------------------------------------
+    # Instructor — инструктор (шеф-повар)
+    # ----------------------------------------------------------------
+    Instructor:
+      type: object
+      description: |
+        Инструктор (шеф-повар) кулинарной студии «Шеф-стол».
+        Справочная сущность, read-only для клиента.
+
+        Контакты шефа (телефон, email, соцсети) **не возвращаются** в API
+        клиентскому приложению (NFR-11, foundations §8.2 — защита ПДн третьих лиц).
+        Клиент видит только имя.
+      required:
+        - id
+        - name
+        - is_active
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        name:
+          type: string
+          description: Имя шефа, отображается в карточке класса и фильтрах.
+          maxLength: 100
+          example: Анна Иванова
+        bio:
+          type: string
+          description: Краткая биография / регалии шефа. Опционально, для отображения в карточке класса.
+          maxLength: 500
+          example: Шеф-повар с 10-летним опытом, стажировалась в Италии.
+        photo_url:
+          type: string
+          format: uri
+          description: URL фото шефа (аватар для карточки класса). Опционально.
+          example: https://cdn.shefstol.example/instructors/anna.jpg
+        is_active:
+          type: boolean
+          description: |
+            Флаг активности. only_active=true в listInstructors возвращает
+            только активных шефов (те, кто ведёт классы в расписании).
+          example: true
+
+    # ----------------------------------------------------------------
+    # InstructorSummary — урезанная модель для списка (фильтры)
+    # ----------------------------------------------------------------
+    InstructorSummary:
+      type: object
+      description: |
+        Урезанное представление инструктора для фильтров (BS-001) и списка.
+        Содержит только id и name — этого достаточно для чипов выбора.
+      required:
+        - id
+        - name
+      properties:
+        id:
+          $ref: '../common/models.yaml#/components/schemas/UUID'
+        name:
+          type: string
+          example: Анна Иванова
+
+    # ----------------------------------------------------------------
+    # InstructorListResponse — ответ listInstructors
+    # ----------------------------------------------------------------
+    InstructorListResponse:
+      type: object
+      description: Ответ на запрос справочника инструкторов.
+      required:
+        - items
+        - meta
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstructorSummary'
+          description: Массив инструкторов, отсортированный по имени.
+        meta:
+          $ref: '../common/models.yaml#/components/schemas/PaginationMeta'
