@@ -1,0 +1,25 @@
+  # IDE
+.idea/
+
+# VS Code (если используется)
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Node.js
+node_modules/
+
+# Логи
+*.log
+
+# Кэш
+.cache/
+.cache-loader/
+.parcel-cache/
+.eslintcache
+
+# Системные файлы
+.DS_Store
+Thumbs.db
